@@ -6,6 +6,13 @@ from urllib.parse import urljoin
 logger = logging.getLogger("simplifiapi")
 
 SIMPLIFI_ENDPOINT = "https://services.quicken.com"
+DEFAULT_TIMEOUT = 30
+
+
+def _redact(token):
+    if not token:
+        return token
+    return "{}...{}".format(token[:4], token[-4:]) if len(token) > 8 else "***"
 
 
 class Client():
@@ -27,7 +34,8 @@ class Client():
             "username": email,
         }
         r = self.session.post(
-            url="https://services.quicken.com/oauth/authorize", json=body)
+            url="https://services.quicken.com/oauth/authorize", json=body,
+            timeout=DEFAULT_TIMEOUT)
         data = r.json()
         status = data.get("status")
         if (status == "MFA code sent"):
@@ -36,8 +44,9 @@ class Client():
             mfaCode = input("MFA Code: ")
             body["mfaChannel"] = mfaChannel
             body["mfaCode"] = mfaCode
-            r = requests.post(
-                url="https://services.quicken.com/oauth/authorize", json=body)
+            r = self.session.post(
+                url="https://services.quicken.com/oauth/authorize", json=body,
+                timeout=DEFAULT_TIMEOUT)
             r.raise_for_status()
             data = r.json()
             status = data.get("status")
@@ -55,11 +64,12 @@ class Client():
                                   "grantType": "authorization_code",
                                   "code": code,
                                   "redirectUri": "https://app.simplifimoney.com/login"
-                              })
+                              },
+                              timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         token = r.json().get("accessToken")
 
-        logger.warn("Retrieved token {}".format(token))
+        logger.warn("Retrieved token {}".format(_redact(token)))
 
         return token
 
@@ -67,7 +77,7 @@ class Client():
         headers = {"Authorization": "Bearer {}".format(token)}
 
         r = self.session.get(url="https://services.quicken.com/userprofiles/me",
-                             headers=headers)
+                             headers=headers, timeout=DEFAULT_TIMEOUT)
         if (r.status_code != 200):
             logger.error("Error code: {}".format(r.status_code))
             logger.error(r.json())
@@ -86,6 +96,7 @@ class Client():
         data = []
         while nextLink:
             logger.warn("Fetching {}".format(nextLink))
+            kargs.setdefault("timeout", DEFAULT_TIMEOUT)
             r = self.session.get(url=urljoin(
                 SIMPLIFI_ENDPOINT, nextLink), **kargs)
             r.raise_for_status()

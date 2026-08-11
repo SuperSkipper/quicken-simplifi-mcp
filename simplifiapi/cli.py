@@ -1,3 +1,4 @@
+import getpass
 import json
 import logging
 import sys
@@ -24,11 +25,16 @@ def parse_arguments(args):
     parser.add_argument('--password',
                         nargs="?",
                         default=None,
-                        help="The password for your Quicken Simplifi account")
+                        help="The password for your Quicken Simplifi account. "
+                             "Passing this on the command line exposes it in your shell "
+                             "history and process list (`ps`); omit it and you will be "
+                             "prompted for it securely instead.")
     parser.add_argument('--token',
                         nargs="?",
                         default=None,
-                        help="Use existing token to bypass MFA check")
+                        help="Use existing token to bypass MFA check. Treat this like a "
+                             "password: avoid shell history/logs and prefer piping it in "
+                             "over typing it inline.")
 
     # Datasets
     parser.add_argument('--accounts',
@@ -76,31 +82,35 @@ def main():
     client = Client()
 
     token = options.token
-    if (not token):
+    if not token:
+        if not options.email:
+            options.email = input("Email: ")
+        if not options.password:
+            options.password = getpass.getpass("Password: ")
         token = client.get_token(
             email=options.email, password=options.password)
 
-    if (client.verify_token(token) == False):
+    if not client.verify_token(token):
         logger.error("Unable to log in simplifi.")
         return
 
     # Retrieve first dataset
     # TODO: Support multiple datasets
     datasets = client.get_datasets()
-    datasetId = datasets[0]["id"]
+    dataset_id = datasets[0]["id"]
 
     if (options.accounts):
-        accounts = client.get_accounts(datasetId)
+        accounts = client.get_accounts(dataset_id)
         write_data(options, accounts, "accounts")
 
-    if (options.transactions):
-        transactions = client.get_transactions(datasetId)
+    if options.transactions:
+        transactions = client.get_transactions(dataset_id)
         write_data(options, transactions, "transactions")
 
-    if (options.tags):
-        tags = client.get_tags(datasetId)
+    if options.tags:
+        tags = client.get_tags(dataset_id)
         write_data(options, tags, "tags")
 
-    if (options.categories):
-        categories = client.get_categories(datasetId)
+    if options.categories:
+        categories = client.get_categories(dataset_id)
         write_data(options, categories, "categories")

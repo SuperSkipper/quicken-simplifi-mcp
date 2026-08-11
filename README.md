@@ -9,6 +9,44 @@ PyPI is temporarily down. Install with pip from GitHub directly
 pip3 install git+https://github.com/rijn/simplifiapi
 ```
 
+## Local Development
+
+Clone the repo and work from a virtual environment:
+
+```shell
+git clone https://github.com/rijn/simplifiapi
+cd simplifiapi
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### Editable install
+
+For day-to-day development, install the package in editable mode so changes under
+`simplifiapi/` take effect immediately without reinstalling:
+
+```shell
+pip3 install -e .
+```
+
+This also installs the `simplifiapi` console script and its dependencies
+(`configargparse`, `pandas`, `requests`), so you can run `simplifiapi --help` right away.
+
+### Building a distributable package
+
+To build the sdist/wheel the same way [`deploy.sh`](./deploy.sh) does for releases:
+
+```shell
+pip3 install build
+python3 -m build
+```
+
+This produces `dist/*.whl` and `dist/*.tar.gz`, which you can install locally with:
+
+```shell
+pip3 install dist/*.whl
+```
+
 ## CLI
 
 This package provides a command-line tool that could access and save data to local files.
@@ -33,6 +71,11 @@ examples:
 > simplifiapi --token="..." --transactions
 > simplifiapi --token="..." --transactions --filename=20231125 --format=csv
 ```
+
+> **Security note:** avoid passing `--password` or `--token` directly on the command line —
+> they end up in your shell history and are visible to other local users via `ps`. If you
+> omit `--email`/`--password`, the CLI will prompt for them interactively (password input
+> is hidden).
 
 ## Python API
 
