@@ -52,7 +52,7 @@ pip3 install dist/*.whl
 This package provides a command-line tool that could access and save data to local files.
 
 ```shell
-usage: simplifiapi [-h] [--email [EMAIL]] [--password [PASSWORD]] [--token [TOKEN]] [--accounts] [--transactions] [--tags] [--categories] [--filename FILENAME] [--format {json,csv}]
+usage: simplifiapi [-h] [--email [EMAIL]] [--password [PASSWORD]] [--token [TOKEN]] [--token-cache-file TOKEN_CACHE_FILE] [--no-cache] [--logout] [--accounts] [--transactions] [--tags] [--categories] [--filename FILENAME] [--format {json,csv}]
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -60,6 +60,11 @@ optional arguments:
   --password [PASSWORD]
                         The password for your Quicken Simplifi account
   --token [TOKEN]       Use existing token to bypass MFA check
+  --token-cache-file TOKEN_CACHE_FILE
+                        Where to cache the access token between runs (default:
+                        ~/.simplifiapi/token.json)
+  --no-cache            Don't read or write the token cache; always prompt for credentials
+  --logout              Delete the cached token and exit
   --accounts            Retrieve accounts
   --transactions        Retrieve transactions
   --tags                Retrieve tags
@@ -72,10 +77,22 @@ examples:
 > simplifiapi --token="..." --transactions --filename=20231125 --format=csv
 ```
 
+### Token persistence
+
+The first time you log in (via `--email`/`--password` or `--token`), the resulting access
+token is cached to `~/.simplifiapi/token.json` (created with `0600` permissions). Subsequent
+runs reuse that cached token automatically and skip the login/MFA flow entirely — you'll
+only be prompted again once the cached token is rejected by the server (expired/revoked).
+
+- `--token-cache-file PATH` — use a different cache location.
+- `--no-cache` — never read or write the cache; always authenticate fresh.
+- `--logout` — delete the cached token.
+
 > **Security note:** avoid passing `--password` or `--token` directly on the command line —
 > they end up in your shell history and are visible to other local users via `ps`. If you
 > omit `--email`/`--password`, the CLI will prompt for them interactively (password input
-> is hidden).
+> is hidden). The token cache file is a bearer credential too — it's written with `0600`
+> permissions, but back it up and share it with the same care as a password.
 
 ## Python API
 

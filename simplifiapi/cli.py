@@ -1,6 +1,7 @@
 import getpass
 import json
 import logging
+import os
 import sys
 
 import configargparse
@@ -12,6 +13,35 @@ logger = logging.getLogger("simplifiapi")
 
 JSON_FORMAT = "json"
 CSV_FORMAT = "csv"
+
+DEFAULT_TOKEN_CACHE_FILE = os.path.join(
+    os.path.expanduser("~"), ".simplifi-mcp", "token.json")
+
+
+def _load_cached_token(path):
+    try:
+        with open(path, "r") as f:
+            return json.load(f).get("token")
+    except (OSError, ValueError):
+        return None
+
+
+def _save_cached_token(path, token):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True, mode=0o700)
+    # Open with an explicit mode instead of writing then chmod'ing, so the
+    # token is never briefly readable with default (world-readable) permissions.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"token": token}, f)
+
+
+def _clear_cached_token(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 def parse_arguments(args):
@@ -35,6 +65,22 @@ def parse_arguments(args):
                         help="Use existing token to bypass MFA check. Treat this like a "
                              "password: avoid shell history/logs and prefer piping it in "
                              "over typing it inline.")
+
+    # Token cache
+    parser.add_argument('--token-cache-file',
+                        default=DEFAULT_TOKEN_CACHE_FILE,
+                        help="Where to cache the access token so future runs can skip "
+                             "login. Defaults to ~/.simplifi-mcp/token.json, written with "
+                             "0600 permissions.")
+    parser.add_argument('--no-cache',
+                        action="store_true",
+                        default=False,
+                        help="Don't read or write the token cache; always prompt for "
+                             "credentials.")
+    parser.add_argument('--logout',
+                        action="store_true",
+                        default=False,
+                        help="Delete the cached token and exit.")
 
     # Datasets
     parser.add_argument('--accounts',
@@ -79,20 +125,40 @@ def write_data(options, data, name):
 def main():
     options = parse_arguments(sys.argv[1:])
 
+    if options.logout:
+        _clear_cached_token(options.token_cache_file)
+        logger.info("Cleared cached token at {}".format(options.token_cache_file))
+        return
+
     client = Client()
 
+    # Prefer an explicitly-passed token, then fall back to the cached one from
+    # a previous run, before asking the user to log in again.
     token = options.token
-    if not token:
+    if not token and not options.no_cache:
+        token = _load_cached_token(options.token_cache_file)
+        if token:
+            logger.info("Using cached token from {}".format(options.token_cache_file))
+
+    authenticated = bool(token) and client.verify_token(token)
+
+    if not authenticated:
+        if token:
+            logger.warning("Cached/provided token is invalid or expired; reauthenticating.")
         if not options.email:
             options.email = input("Email: ")
         if not options.password:
             options.password = getpass.getpass("Password: ")
         token = client.get_token(
             email=options.email, password=options.password)
+        authenticated = bool(token) and client.verify_token(token)
 
-    if not client.verify_token(token):
+    if not authenticated:
         logger.error("Unable to log in simplifi.")
         return
+
+    if not options.no_cache:
+        _save_cached_token(options.token_cache_file, token)
 
     # Retrieve first dataset
     # TODO: Support multiple datasets
