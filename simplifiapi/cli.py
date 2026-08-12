@@ -1,47 +1,17 @@
 import getpass
 import json
 import logging
-import os
 import sys
 
 import configargparse
 from pandas import json_normalize
 
-from simplifiapi.client import Client
+from simplifiapi.client import Client, DEFAULT_TOKEN_ENV_FILE
 
 logger = logging.getLogger("simplifiapi")
 
 JSON_FORMAT = "json"
 CSV_FORMAT = "csv"
-
-DEFAULT_TOKEN_CACHE_FILE = os.path.join(
-    os.path.expanduser("~"), ".simplifi-mcp", "token.json")
-
-
-def _load_cached_token(path):
-    try:
-        with open(path, "r") as f:
-            return json.load(f).get("token")
-    except (OSError, ValueError):
-        return None
-
-
-def _save_cached_token(path, token):
-    directory = os.path.dirname(path)
-    if directory:
-        os.makedirs(directory, exist_ok=True, mode=0o700)
-    # Open with an explicit mode instead of writing then chmod'ing, so the
-    # token is never briefly readable with default (world-readable) permissions.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump({"token": token}, f)
-
-
-def _clear_cached_token(path):
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
 
 
 def parse_arguments(args):
@@ -68,10 +38,11 @@ def parse_arguments(args):
 
     # Token cache
     parser.add_argument('--token-cache-file',
-                        default=DEFAULT_TOKEN_CACHE_FILE,
+                        default=DEFAULT_TOKEN_ENV_FILE,
                         help="Where to cache the access token so future runs can skip "
-                             "login. Defaults to ~/.simplifi-mcp/token.json, written with "
-                             "0600 permissions.")
+                             "login. Defaults to the 'local' environment in "
+                             "http-client.env.json, so the token doubles as the "
+                             "{{token}} variable for api-requests.http.")
     parser.add_argument('--no-cache',
                         action="store_true",
                         default=False,
@@ -125,18 +96,18 @@ def write_data(options, data, name):
 def main():
     options = parse_arguments(sys.argv[1:])
 
-    if options.logout:
-        _clear_cached_token(options.token_cache_file)
-        logger.info("Cleared cached token at {}".format(options.token_cache_file))
-        return
+    client = Client(token_env_file=options.token_cache_file)
 
-    client = Client()
+    if options.logout:
+        client.clear_token()
+        logger.info("Cleared cached token in {}".format(options.token_cache_file))
+        return
 
     # Prefer an explicitly-passed token, then fall back to the cached one from
     # a previous run, before asking the user to log in again.
     token = options.token
     if not token and not options.no_cache:
-        token = _load_cached_token(options.token_cache_file)
+        token = client.load_token()
         if token:
             logger.info("Using cached token from {}".format(options.token_cache_file))
 
@@ -158,7 +129,7 @@ def main():
         return
 
     if not options.no_cache:
-        _save_cached_token(options.token_cache_file, token)
+        client.save_token(token)
 
     # Retrieve first dataset
     # TODO: Support multiple datasets

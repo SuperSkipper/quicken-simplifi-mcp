@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 import requests
 import uuid
 from urllib.parse import urljoin
@@ -7,6 +9,14 @@ logger = logging.getLogger("simplifiapi")
 
 SIMPLIFI_ENDPOINT = "https://services.quicken.com"
 DEFAULT_TIMEOUT = 30
+
+# The JetBrains HTTP Client environment file at the project root. Reusing it
+# (rather than a separate cache file) means a token fetched here is
+# immediately usable as {{token}} in api-requests.http, and vice versa.
+DEFAULT_TOKEN_ENV_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "http-client.env.json")
+DEFAULT_TOKEN_ENV_NAME = "local"
 
 
 def _redact(token):
@@ -17,8 +27,41 @@ def _redact(token):
 
 class Client():
 
-    def __init__(self):
+    def __init__(self, token_env_file=DEFAULT_TOKEN_ENV_FILE,
+                 token_env_name=DEFAULT_TOKEN_ENV_NAME):
         self.session = requests.Session()
+        self.token_env_file = token_env_file
+        self.token_env_name = token_env_name
+
+    def _read_token_env(self):
+        try:
+            with open(self.token_env_file, "r") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def load_token(self):
+        """Read a previously cached token from the HTTP Client env file, if any."""
+        env = self._read_token_env()
+        return env.get(self.token_env_name, {}).get("token")
+
+    def save_token(self, token):
+        """Persist the token into the HTTP Client env file, preserving any
+        other environments/variables already stored there."""
+        env = self._read_token_env()
+        env.setdefault(self.token_env_name, {})["token"] = token
+        with open(self.token_env_file, "w") as f:
+            json.dump(env, f, indent=2)
+            f.write("\n")
+
+    def clear_token(self):
+        """Remove the cached token from the HTTP Client env file, leaving
+        any other environments/variables stored there untouched."""
+        env = self._read_token_env()
+        if env.get(self.token_env_name, {}).pop("token", None) is not None:
+            with open(self.token_env_file, "w") as f:
+                json.dump(env, f, indent=2)
+                f.write("\n")
 
     def get_token(self, email, password):
         # Step 1: Oauth authorize
