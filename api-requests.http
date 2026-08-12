@@ -106,6 +106,14 @@ Qcs-Dataset-Id: {{datasetId}}
 
 ###
 
+### Get singular transaction from a dataset
+
+GET {{host}}/transactions/544952330094811137
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+###
+
 ### List tags for a dataset
 # Mirrors Client.get_tags().
 GET {{host}}/tags?limit=1000

@@ -184,6 +184,45 @@ class Client():
                                     "limit": 1000,
                                 })
 
+    def get_transaction(self, transactionId: str, datasetId: str = "") -> dict:
+        """Get a single transaction by id."""
+        headers = dict(self.session.headers)
+        if datasetId:
+            headers["Qcs-Dataset-Id"] = datasetId
+        r = self.session.get(
+            url=urljoin(SIMPLIFI_ENDPOINT, f"/transactions/{transactionId}"),
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def update_transaction(self, transactionId: str, transaction: dict, datasetId: str = "") -> dict:
+        """Update a transaction.
+
+        `transaction` should be the full transaction body (the same shape
+        returned by get_transactions() / get_account_details() siblings --
+        see transaction_update_example.json for a worked example), since
+        the API replaces the transaction wholesale rather than patching
+        individual fields.
+        """
+        headers = dict(self.session.headers)
+        headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "App-Client-Id": "acme_web",
+            "Content-Type": "application/json;charset=UTF-8",
+        })
+        if datasetId:
+            headers["Qcs-Dataset-Id"] = datasetId
+        r = self.session.put(
+            url=urljoin(SIMPLIFI_ENDPOINT, f"/transactions/{transactionId}"),
+            headers=headers,
+            json=transaction,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json()
+
     def get_tags(self, datasetId: str):
         return self._unpaginate(path="/tags",
                                 headers={

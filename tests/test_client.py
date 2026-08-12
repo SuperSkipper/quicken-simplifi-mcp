@@ -201,6 +201,62 @@ def test_dataset_scoped_list_methods_send_the_dataset_id_header(client, requests
     assert requests_mock.last_request.headers["Qcs-Dataset-Id"] == "dataset-1"
 
 
+# --- get_transaction ----------------------------------------------------------
+
+def test_get_transaction_returns_the_parsed_transaction(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/transactions/txn-1", json={"id": "txn-1", "payee": "Sam's Club"})
+
+    assert client.get_transaction("txn-1") == {"id": "txn-1", "payee": "Sam's Club"}
+
+
+def test_get_transaction_sends_dataset_id_header_when_given(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/transactions/txn-1", json={})
+
+    client.get_transaction("txn-1", datasetId="dataset-1")
+
+    assert requests_mock.last_request.headers["Qcs-Dataset-Id"] == "dataset-1"
+
+
+def test_get_transaction_omits_dataset_id_header_when_not_given(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/transactions/txn-1", json={})
+
+    client.get_transaction("txn-1")
+
+    assert "Qcs-Dataset-Id" not in requests_mock.last_request.headers
+
+
+# --- update_transaction -------------------------------------------------------
+
+def test_update_transaction_puts_the_transaction_body_and_returns_the_response(client, requests_mock):
+    transaction = {"id": "txn-1", "amount": -49.2, "payee": "Sam's Club"}
+    requests_mock.put(
+        f"{QUICKEN}/transactions/txn-1",
+        json={**transaction, "modifiedAt": "2026-08-12T00:00:00Z"},
+    )
+
+    result = client.update_transaction("txn-1", transaction)
+
+    assert result == {**transaction, "modifiedAt": "2026-08-12T00:00:00Z"}
+    assert requests_mock.last_request.method == "PUT"
+    assert requests_mock.last_request.json() == transaction
+
+
+def test_update_transaction_sends_dataset_id_header_when_given(client, requests_mock):
+    requests_mock.put(f"{QUICKEN}/transactions/txn-1", json={})
+
+    client.update_transaction("txn-1", {"id": "txn-1"}, datasetId="dataset-1")
+
+    assert requests_mock.last_request.headers["Qcs-Dataset-Id"] == "dataset-1"
+
+
+def test_update_transaction_omits_dataset_id_header_when_not_given(client, requests_mock):
+    requests_mock.put(f"{QUICKEN}/transactions/txn-1", json={})
+
+    client.update_transaction("txn-1", {"id": "txn-1"})
+
+    assert "Qcs-Dataset-Id" not in requests_mock.last_request.headers
+
+
 # --- get_account_details -----------------------------------------------------
 
 def test_get_account_details_returns_the_parsed_account(client, requests_mock):
