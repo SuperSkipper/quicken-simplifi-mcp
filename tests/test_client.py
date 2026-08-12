@@ -1,0 +1,283 @@
+import json
+
+import pytest
+
+from simplifiapi.client import _redact
+
+QUICKEN = "https://services.quicken.com"
+
+
+# --- _redact -----------------------------------------------------------
+
+def test_redact_keeps_first_and_last_four_characters_of_a_long_token():
+    assert _redact("abcdefghij") == "abcd...ghij"
+
+
+def test_redact_fully_masks_a_short_token():
+    assert _redact("short") == "***"
+
+
+def test_redact_passes_through_falsy_values_unchanged():
+    assert _redact(None) is None
+    assert _redact("") == ""
+
+
+# --- load_token / save_token / clear_token ------------------------------
+
+def test_load_token_returns_none_when_env_file_is_missing(client):
+    assert client.load_token() is None
+
+
+def test_load_token_returns_none_when_env_file_is_not_valid_json(client, token_env_file):
+    token_env_file.write_text("not json")
+
+    assert client.load_token() is None
+
+
+def test_save_token_then_load_token_round_trips(client):
+    client.save_token("abc123")
+
+    assert client.load_token() == "abc123"
+
+
+def test_save_token_preserves_other_environments_and_variables(client, token_env_file):
+    token_env_file.write_text(json.dumps({
+        "local": {"host": QUICKEN},
+        "prod": {"token": "prod-token"},
+    }))
+
+    client.save_token("new-token")
+
+    saved = json.loads(token_env_file.read_text())
+    assert saved["local"] == {"host": QUICKEN, "token": "new-token"}
+    assert saved["prod"] == {"token": "prod-token"}
+
+
+def test_clear_token_removes_only_the_token(client, token_env_file):
+    token_env_file.write_text(json.dumps({"local": {"host": QUICKEN, "token": "abc"}}))
+
+    client.clear_token()
+
+    assert json.loads(token_env_file.read_text()) == {"local": {"host": QUICKEN}}
+
+
+def test_clear_token_is_a_noop_when_no_token_is_cached(client):
+    client.clear_token()  # must not raise
+
+    assert client.load_token() is None
+
+
+# --- get_token -----------------------------------------------------------
+
+def test_get_token_logs_in_with_explicit_credentials(client, requests_mock):
+    requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"code": "auth-code"})
+    requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
+
+    token = client.get_token(email="a@b.com", password="secret")
+
+    assert token == "the-token"
+    authorize_request = requests_mock.request_history[0].json()
+    assert authorize_request["username"] == "a@b.com"
+    assert authorize_request["password"] == "secret"
+
+
+def test_get_token_falls_back_to_env_file_credentials_when_not_passed(client, write_env, requests_mock):
+    write_env(email="env@example.com", password="env-secret")
+    requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"code": "auth-code"})
+    requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
+
+    client.get_token()
+
+    authorize_request = requests_mock.request_history[0].json()
+    assert authorize_request["username"] == "env@example.com"
+    assert authorize_request["password"] == "env-secret"
+
+
+def test_get_token_prefers_explicit_credentials_over_env_file(client, write_env, requests_mock):
+    write_env(email="env@example.com", password="env-secret")
+    requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"code": "auth-code"})
+    requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
+
+    client.get_token(email="explicit@example.com", password="explicit-secret")
+
+    authorize_request = requests_mock.request_history[0].json()
+    assert authorize_request["username"] == "explicit@example.com"
+    assert authorize_request["password"] == "explicit-secret"
+
+
+def test_get_token_follows_up_with_mfa_code_when_required(client, monkeypatch, requests_mock):
+    requests_mock.post(
+        f"{QUICKEN}/oauth/authorize",
+        [
+            {"json": {"status": "MFA code sent", "mfaChannel": "sms"}},
+            {"json": {"status": "User passed MFA", "code": "auth-code"}},
+        ],
+    )
+    requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
+    monkeypatch.setattr("builtins.input", lambda prompt: "123456")
+
+    token = client.get_token(email="a@b.com", password="secret")
+
+    assert token == "the-token"
+    mfa_request = requests_mock.request_history[1].json()
+    assert mfa_request["mfaChannel"] == "sms"
+    assert mfa_request["mfaCode"] == "123456"
+
+
+def test_get_token_returns_none_when_mfa_check_fails(client, monkeypatch, requests_mock):
+    requests_mock.post(
+        f"{QUICKEN}/oauth/authorize",
+        [
+            {"json": {"status": "MFA code sent", "mfaChannel": "sms"}},
+            {"json": {"status": "MFA failed"}},
+        ],
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "wrong-code")
+
+    assert client.get_token(email="a@b.com", password="secret") is None
+
+
+# --- verify_token ----------------------------------------------------------
+
+def test_verify_token_returns_true_and_sets_the_session_auth_header(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/userprofiles/me", json={"id": "user-1"})
+
+    assert client.verify_token("the-token") is True
+    assert client.session.headers["Authorization"] == "Bearer the-token"
+
+
+def test_verify_token_returns_false_on_a_non_200_response(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/userprofiles/me", status_code=401, json={"error": "invalid"})
+
+    assert client.verify_token("bad-token") is False
+
+
+# --- _unpaginate -------------------------------------------------------------
+
+def test_unpaginate_follows_next_link_until_exhausted(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/things",
+        json={"resources": [{"id": 1}], "metaData": {"nextLink": "/things?page=2"}},
+    )
+    requests_mock.get(
+        f"{QUICKEN}/things?page=2",
+        json={"resources": [{"id": 2}], "metaData": {"nextLink": None}},
+    )
+
+    assert client._unpaginate(path="/things") == [{"id": 1}, {"id": 2}]
+
+
+# --- get_accounts / get_transactions / get_tags / get_categories -----------
+
+@pytest.mark.parametrize("method_name, path", [
+    ("get_accounts", "/accounts"),
+    ("get_transactions", "/transactions"),
+    ("get_tags", "/tags"),
+    ("get_categories", "/categories"),
+])
+def test_dataset_scoped_list_methods_send_the_dataset_id_header(client, requests_mock, method_name, path):
+    requests_mock.get(
+        f"{QUICKEN}{path}",
+        json={"resources": [{"id": "1"}], "metaData": {"nextLink": None}},
+    )
+
+    result = getattr(client, method_name)(datasetId="dataset-1")
+
+    assert result == [{"id": "1"}]
+    assert requests_mock.last_request.headers["Qcs-Dataset-Id"] == "dataset-1"
+
+
+# --- get_account_details -----------------------------------------------------
+
+def test_get_account_details_returns_the_parsed_account(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/accounts/acct-1", json={"id": "acct-1", "name": "Checking"})
+
+    assert client.get_account_details("acct-1") == {"id": "acct-1", "name": "Checking"}
+
+
+def test_get_account_details_sends_dataset_id_header_when_given(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/accounts/acct-1", json={})
+
+    client.get_account_details("acct-1", datasetId="dataset-1")
+
+    assert requests_mock.last_request.headers["Qcs-Dataset-Id"] == "dataset-1"
+
+
+# --- get_investment_accounts --------------------------------------------------
+
+def test_get_investment_accounts_filters_out_non_investment_accounts(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/accounts",
+        json={
+            "resources": [
+                {"id": "1", "type": "INVESTMENT"},
+                {"id": "2", "type": "BANK"},
+            ],
+            "metaData": {"nextLink": None},
+        },
+    )
+    requests_mock.get(f"{QUICKEN}/accounts/1", json={
+        "id": "1",
+        "name": "Brokerage",
+        "type": "INVESTMENT",
+        "subType": "BROKERAGE",
+        "onlineBalance": 1000.5,
+        "currency": "USD",
+        "lastSuccessfulRefreshAt": "2026-01-01T00:00:00Z",
+    })
+
+    result = client.get_investment_accounts("dataset-1")
+
+    assert result == [{
+        "id": "1",
+        "name": "Brokerage",
+        "type": "INVESTMENT",
+        "subtype": "BROKERAGE",
+        "balance": 1000.5,
+        "currency": "USD",
+        "last_synced": "2026-01-01T00:00:00Z",
+    }]
+
+
+# --- get_holdings ---------------------------------------------------------
+
+def test_get_holdings_returns_resources_and_filters_by_account(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/investments/holdings", json={"resources": [{"id": "h1"}]})
+
+    result = client.get_holdings("dataset-1", accountId="acct-1")
+
+    assert result == [{"id": "h1"}]
+    assert "accountId=acct-1" in requests_mock.last_request.url
+
+
+def test_get_holdings_returns_an_empty_list_when_the_request_fails(client, requests_mock):
+    requests_mock.get(f"{QUICKEN}/investments/holdings", status_code=500)
+
+    assert client.get_holdings("dataset-1") == []
+
+
+# --- get_net_worth ---------------------------------------------------------
+
+def test_get_net_worth_sums_assets_and_liabilities_by_account_type(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/accounts",
+        json={"resources": [{"id": "1"}, {"id": "2"}], "metaData": {"nextLink": None}},
+    )
+    requests_mock.get(f"{QUICKEN}/accounts/1", json={
+        "id": "1", "name": "Checking", "type": "BANK", "onlineBalance": 500,
+    })
+    requests_mock.get(f"{QUICKEN}/accounts/2", json={
+        "id": "2", "name": "Credit Card", "type": "CREDIT", "onlineBalance": -200,
+    })
+
+    net_worth = client.get_net_worth("dataset-1")
+
+    assert net_worth == {
+        "total_assets": 500,
+        "total_liabilities": 200,
+        "net_worth": 300,
+        "accounts": [
+            {"name": "Checking", "type": "BANK", "balance": 500},
+            {"name": "Credit Card", "type": "CREDIT", "balance": -200},
+        ],
+    }

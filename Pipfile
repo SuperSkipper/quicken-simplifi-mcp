@@ -8,6 +8,8 @@ configargparse = "*"
 setuptools = {path = ".", editable = true}
 
 [dev-packages]
+pytest = "*"
+requests-mock = "*"
 
 [requires]
 python_version = "3.14"
