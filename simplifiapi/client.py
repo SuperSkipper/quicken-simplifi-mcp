@@ -188,3 +188,96 @@ class Client():
                                 params={
                                     "limit": 1000,
                                 })
+
+    def get_account_details(self, accountId: str, datasetId: str = "") -> dict:
+        """Get detailed account information including balance."""
+        headers = dict(self.session.headers)
+        if datasetId:
+            headers["Qcs-Dataset-Id"] = datasetId
+        r = self.session.get(
+            url=urljoin(SIMPLIFI_ENDPOINT, f"/accounts/{accountId}"),
+            headers=headers
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def get_investment_accounts(self, datasetId: str) -> list:
+        """Get all investment accounts with their balances."""
+        accounts = self.get_accounts(datasetId)
+        investment_accounts = []
+
+        for acc in accounts:
+            if acc.get("type") == "INVESTMENT":
+                # Get full details for balance
+                details = self.get_account_details(acc["id"], datasetId)
+                investment_accounts.append({
+                    "id": details.get("id"),
+                    "name": details.get("name"),
+                    "type": details.get("type"),
+                    "subtype": details.get("subType"),
+                    "balance": details.get("onlineBalance", 0) or 0,
+                    "currency": details.get("currency", "USD"),
+                    "last_synced": details.get("lastSuccessfulRefreshAt"),
+                })
+
+        return investment_accounts
+
+    def get_holdings(self, datasetId: str, accountId: str = "") -> list:
+        """Get investment holdings.
+
+        Note: This endpoint may return empty results if holdings data
+        is not available through the API.
+        """
+        headers = dict(self.session.headers)
+        headers["Qcs-Dataset-Id"] = datasetId
+
+        params = {"limit": 1000}
+        if accountId:
+            params["accountId"] = accountId
+
+        try:
+            r = self.session.get(
+                url=urljoin(SIMPLIFI_ENDPOINT, "/investments/holdings"),
+                headers=headers,
+                params=params
+            )
+            r.raise_for_status()
+            return r.json().get("resources", [])
+        except Exception as e:
+            logger.warning(f"Failed to fetch holdings: {e}")
+            return []
+
+    def get_net_worth(self, datasetId: str) -> dict:
+        """Calculate net worth from all accounts."""
+        accounts = self.get_accounts(datasetId)
+
+        total_assets = 0
+        total_liabilities = 0
+        account_summary = []
+
+        asset_types = {"INVESTMENT", "BANK", "REAL_ESTATE", "VEHICLE"}
+        liability_types = {"LOAN", "CREDIT"}
+
+        for acc in accounts:
+            details = self.get_account_details(acc["id"], datasetId)
+            balance = details.get("onlineBalance", 0) or 0
+            acc_type = details.get("type", "")
+            name = details.get("name", "")
+
+            account_summary.append({
+                "name": name,
+                "type": acc_type,
+                "balance": balance,
+            })
+
+            if acc_type in asset_types:
+                total_assets += balance
+            elif acc_type in liability_types:
+                total_liabilities += abs(balance)
+
+        return {
+            "total_assets": total_assets,
+            "total_liabilities": total_liabilities,
+            "net_worth": total_assets - total_liabilities,
+            "accounts": account_summary,
+        }

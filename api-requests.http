@@ -1,6 +1,142 @@
-### GET request to example server
-GET https://examples.http-client.intellij.net/get
-    ?generated-in=PyCharm
+### Step 1: OAuth authorize (email/password login)
+# Mirrors Client.get_token() step 1. On success the response has a `code`.
+# If MFA is enabled, status is "MFA code sent" instead -- use the follow-up
+# request below with the returned mfaChannel and a code from that channel.
+POST {{host}}/oauth/authorize
+Content-Type: application/json
+
+{
+  "clientId": "acme_web",
+  "mfaChannel": null,
+  "mfaCode": null,
+  "password": "{{password}}",
+  "redirectUri": "https://app.simplifimoney.com/login",
+  "responseType": "code",
+  "threatMetrixRequestId": null,
+  "threatMetrixSessionId": "{{$uuid}}",
+  "username": "{{email}}"
+}
+
+> {%
+    client.global.set("code", response.body.code);
+    client.global.set("mfaChannel", response.body.mfaChannel);
+%}
 
 ###
 
+### Step 1b: OAuth authorize with MFA code
+# Only needed when step 1 responded with status "MFA code sent".
+POST {{host}}/oauth/authorize
+Content-Type: application/json
+
+{
+  "clientId": "acme_web",
+  "mfaChannel": "{{mfaChannel}}",
+  "mfaCode": "{{mfaCode}}",
+  "password": "{{password}}",
+  "redirectUri": "https://app.simplifimoney.com/login",
+  "responseType": "code",
+  "threatMetrixRequestId": null,
+  "threatMetrixSessionId": "{{$uuid}}",
+  "username": "{{email}}"
+}
+
+> {%
+    client.global.set("code", response.body.code);
+%}
+
+###
+
+### Step 2: Exchange the authorization code for an access token
+# Mirrors Client.get_token() step 2. Saves the token into {{token}}, which
+# also happens to be the same variable Client.save_token() writes into
+# http-client.env.json.
+POST {{host}}/oauth/token
+Content-Type: application/json
+
+{
+  "clientId": "acme_web",
+  "clientSecret": "BCDCxXwdWYcj@bK6",
+  "grantType": "authorization_code",
+  "code": "{{code}}",
+  "redirectUri": "https://app.simplifimoney.com/login"
+}
+
+> {%
+    client.global.set("token", response.body.accessToken);
+%}
+
+###
+
+### Verify token / get current user
+# Mirrors Client.verify_token().
+GET {{host}}/userprofiles/me
+Authorization: Bearer {{token}}
+
+###
+
+### List datasets
+# Mirrors Client.get_datasets().
+GET {{host}}/datasets?limit=1000
+Authorization: Bearer {{token}}
+
+> {%
+    client.global.set("datasetId", response.body.resources[0].id);
+%}
+
+###
+
+### List accounts for a dataset
+# Mirrors Client.get_accounts().
+GET {{host}}/accounts?limit=1000
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+> {%
+    client.global.set("accountId", response.body.resources[0].id);
+%}
+
+###
+
+### List transactions for a dataset
+# Mirrors Client.get_transactions().
+GET {{host}}/transactions?limit=1000&dateOnAfter=2026-08-10
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+###
+
+### List tags for a dataset
+# Mirrors Client.get_tags().
+GET {{host}}/tags?limit=1000
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+###
+
+### List categories for a dataset
+# Mirrors Client.get_categories().
+GET {{host}}/categories?limit=1000
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+###
+
+### Get account details (balance, subtype, last sync, etc.)
+# Mirrors Client.get_account_details(). Used by get_investment_accounts()
+# and get_net_worth() to enrich each account from the list above.
+GET {{host}}/accounts/{{accountId}}
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+###
+
+### List investment holdings for a dataset
+# Mirrors Client.get_holdings(). accountId is optional -- drop the query
+# param to fetch holdings across the whole dataset. Note the endpoint may
+# return an empty list if holdings data isn't available through the API.
+GET {{host}}/investments/holdings?limit=1000&accountId={{accountId}}
+Authorization: Bearer {{token}}
+Qcs-Dataset-Id: {{datasetId}}
+
+###
