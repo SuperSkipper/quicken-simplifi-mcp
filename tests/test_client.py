@@ -167,6 +167,20 @@ def test_unpaginate_follows_next_link_until_exhausted(client, requests_mock):
     assert client._unpaginate(path="/things") == [{"id": 1}, {"id": 2}]
 
 
+# --- get_datasets ------------------------------------------------------------
+
+def test_get_datasets_sends_the_limit_as_a_query_param(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/datasets",
+        json={"resources": [{"id": "dataset-1"}], "metaData": {"nextLink": None}},
+    )
+
+    result = client.get_datasets(limit=50)
+
+    assert result == [{"id": "dataset-1"}]
+    assert requests_mock.last_request.qs["limit"] == ["50"]
+
+
 # --- get_accounts / get_transactions / get_tags / get_categories -----------
 
 @pytest.mark.parametrize("method_name, path", [

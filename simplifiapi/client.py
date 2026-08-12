@@ -163,7 +163,7 @@ class Client():
     def get_datasets(self, limit: int = 1000):
         return self._unpaginate(path="/datasets",
                                 params={
-                                    limit: limit,
+                                    "limit": limit,
                                 })
 
     def get_accounts(self, datasetId: str):
