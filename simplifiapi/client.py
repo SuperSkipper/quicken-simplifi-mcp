@@ -63,7 +63,20 @@ class Client():
                 json.dump(env, f, indent=2)
                 f.write("\n")
 
-    def get_token(self, email, password):
+    def get_token(self, email=None, password=None):
+        # Fall back to the email/password stored in the HTTP Client env
+        # file when the caller doesn't pass them explicitly. If the file
+        # doesn't have them either, fall through to the existing flow
+        # (whatever email/password the caller did pass, including None).
+        if not email or not password:
+            env = self._read_token_env().get(self.token_env_name, {})
+            used_env = (not email and env.get("email")) or (not password and env.get("password"))
+            email = email or env.get("email")
+            password = password or env.get("password")
+            if used_env:
+                logger.info(
+                    "Using email/password from {}".format(self.token_env_file))
+
         # Step 1: Oauth authorize
         body = {
             "clientId": "acme_web",
