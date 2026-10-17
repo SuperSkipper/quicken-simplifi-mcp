@@ -10,12 +10,13 @@ logger = logging.getLogger("simplifiapi")
 SIMPLIFI_ENDPOINT = "https://services.quicken.com"
 DEFAULT_TIMEOUT = 30
 
-# The JetBrains HTTP Client environment file at the project root. Reusing it
-# (rather than a separate cache file) means a token fetched here is
-# immediately usable as {{token}} in api-requests.http, and vice versa.
+# The JetBrains HTTP Client environment file in resources/, next to
+# api-requests.http. Reusing it (rather than a separate cache file) means a
+# token fetched here is immediately usable as {{token}} in
+# api-requests.http, and vice versa.
 DEFAULT_TOKEN_ENV_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "http-client.env.json")
+    "resources", "http-client.env.json")
 DEFAULT_TOKEN_ENV_NAME = "local"
 
 
@@ -332,4 +333,34 @@ class Client():
             "total_liabilities": total_liabilities,
             "net_worth": total_assets - total_liabilities,
             "accounts": account_summary,
+        }
+
+    def get_total_debt(self, datasetId: str) -> dict:
+        """Calculate total debt from liability accounts (loans and credit
+        cards).
+
+        Unlike get_net_worth(), this only uses the balances already
+        returned by get_accounts() -- no per-account detail calls needed.
+        """
+        accounts = self.get_accounts(datasetId)
+
+        liability_types = {"LOAN", "CREDIT"}
+        debt_accounts = []
+        total_debt = 0
+
+        for acc in accounts:
+            if acc.get("type") not in liability_types:
+                continue
+            balance = abs(acc.get("onlineBalance", 0) or 0)
+            debt_accounts.append({
+                "id": acc.get("id"),
+                "name": acc.get("name"),
+                "type": acc.get("type"),
+                "balance": balance,
+            })
+            total_debt += balance
+
+        return {
+            "total_debt": total_debt,
+            "accounts": debt_accounts,
         }

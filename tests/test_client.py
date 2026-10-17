@@ -351,3 +351,57 @@ def test_get_net_worth_sums_assets_and_liabilities_by_account_type(client, reque
             {"name": "Credit Card", "type": "CREDIT", "balance": -200},
         ],
     }
+
+
+# --- get_total_debt ---------------------------------------------------------
+
+def test_get_total_debt_sums_loan_and_credit_balances_from_the_account_list(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/accounts",
+        json={
+            "resources": [
+                {"id": "1", "name": "Checking", "type": "BANK", "onlineBalance": 500},
+                {"id": "2", "name": "Credit Card", "type": "CREDIT", "onlineBalance": -200},
+                {"id": "3", "name": "Car Loan", "type": "LOAN", "onlineBalance": -15000},
+            ],
+            "metaData": {"nextLink": None},
+        },
+    )
+
+    total_debt = client.get_total_debt("dataset-1")
+
+    assert total_debt == {
+        "total_debt": 15200,
+        "accounts": [
+            {"id": "2", "name": "Credit Card", "type": "CREDIT", "balance": 200},
+            {"id": "3", "name": "Car Loan", "type": "LOAN", "balance": 15000},
+        ],
+    }
+
+
+def test_get_total_debt_uses_only_the_account_list_and_does_not_fetch_account_details(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/accounts",
+        json={
+            "resources": [{"id": "1", "name": "Credit Card", "type": "CREDIT", "onlineBalance": -50}],
+            "metaData": {"nextLink": None},
+        },
+    )
+
+    client.get_total_debt("dataset-1")
+
+    # get_net_worth()/get_investment_accounts() fetch details per account;
+    # get_total_debt() should need only the single /accounts list call.
+    assert len(requests_mock.request_history) == 1
+
+
+def test_get_total_debt_is_zero_when_there_are_no_liability_accounts(client, requests_mock):
+    requests_mock.get(
+        f"{QUICKEN}/accounts",
+        json={
+            "resources": [{"id": "1", "name": "Checking", "type": "BANK", "onlineBalance": 500}],
+            "metaData": {"nextLink": None},
+        },
+    )
+
+    assert client.get_total_debt("dataset-1") == {"total_debt": 0, "accounts": []}

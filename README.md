@@ -62,7 +62,7 @@ optional arguments:
   --token [TOKEN]       Use existing token to bypass MFA check
   --token-cache-file TOKEN_CACHE_FILE
                         Where to cache the access token between runs (default:
-                        ~/.simplifiapi/token.json)
+                        resources/http-client.env.json)
   --no-cache            Don't read or write the token cache; always prompt for credentials
   --logout              Delete the cached token and exit
   --accounts            Retrieve accounts
@@ -80,9 +80,13 @@ examples:
 ### Token persistence
 
 The first time you log in (via `--email`/`--password` or `--token`), the resulting access
-token is cached to `~/.simplifiapi/token.json` (created with `0600` permissions). Subsequent
-runs reuse that cached token automatically and skip the login/MFA flow entirely — you'll
-only be prompted again once the cached token is rejected by the server (expired/revoked).
+token is cached as the `token` variable of the `local` environment in
+`resources/http-client.env.json` — the JetBrains HTTP Client env file used by
+`resources/api-requests.http`, so the same token works as `{{token}}` there. Other
+variables in that file are preserved. If `email`/`password` are set in the `local`
+environment, they're used as login defaults. Subsequent runs reuse the cached token
+automatically and skip the login/MFA flow entirely — you'll only be prompted again once the
+cached token is rejected by the server (expired/revoked).
 
 - `--token-cache-file PATH` — use a different cache location.
 - `--no-cache` — never read or write the cache; always authenticate fresh.
@@ -91,8 +95,8 @@ only be prompted again once the cached token is rejected by the server (expired/
 > **Security note:** avoid passing `--password` or `--token` directly on the command line —
 > they end up in your shell history and are visible to other local users via `ps`. If you
 > omit `--email`/`--password`, the CLI will prompt for them interactively (password input
-> is hidden). The token cache file is a bearer credential too — it's written with `0600`
-> permissions, but back it up and share it with the same care as a password.
+> is hidden). The env file is a bearer credential too (and may hold your password) — it's
+> git-ignored, but back it up and share it with the same care as a password.
 
 ## Python API
 
