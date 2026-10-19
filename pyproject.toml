@@ -1,3 +1,24 @@
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "simplifi-mcp"
+version = "0.1.0"
+description = "MCP server for Quicken Simplifi"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]",
+    "requests",
+]
+
+[project.scripts]
+simplifi-mcp = "simplifi_mcp.server:main"
+
+[tool.setuptools]
+packages = ["simplifi_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

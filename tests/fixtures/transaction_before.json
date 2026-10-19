@@ -1,0 +1,46 @@
+  {
+    "id": "551217536023494657",
+    "createdAt": "2026-08-10T16:14:14Z",
+    "modifiedAt": "2026-08-10T16:14:14Z",
+    "dbVersion": 0,
+    "source": "QCS_REFRESH",
+    "accountId": "527043308569256448",
+    "postedOn": "2026-08-10",
+    "payee": "Sam's Club",
+    "coa": {
+      "type": "CATEGORY",
+      "id": "412662724378485506"
+    },
+    "amount": -58.9,
+    "state": "CLEARED",
+    "matchState": "NOT_MATCHED",
+    "knownCategoryId": "6750000000",
+    "merchantId": "550356622226079488",
+    "mlMerchantId": "550356622226079488",
+    "mlMerchantConfidence": 1.0,
+    "mlInferredPayee": "Sam's Club",
+    "mlCleanedPayee": "Sam's Club",
+    "mlCoa": {
+      "type": "CATEGORY",
+      "id": "412662724378485506"
+    },
+    "mlKnownCategoryId": "6750000000",
+    "cpData": {
+      "channel": "PLAID",
+      "id": "8myQdzMOr0S3O59mL0jbidK8AJ89OnHJj64gd",
+      "txnType": "CASH_FLOW",
+      "postedOn": "2026-08-10",
+      "txnOn": "2026-08-09",
+      "payee": "Sam's Club",
+      "amount": -58.9,
+      "merchantId": "KAE0nWNpERLZQyM6AMyDmNXjkQn76jKQBmRqA",
+      "merchantConfidence": 0.98,
+      "inferredPayee": "Sam's Club",
+      "inferredCoa": {
+        "type": "CATEGORY",
+        "id": "412662724378485506"
+      },
+      "cpCategoryId": "250003750"
+    },
+    "type": "CASH_FLOW"
+  }

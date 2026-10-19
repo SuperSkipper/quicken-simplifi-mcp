@@ -1,0 +1,51 @@
+{
+  "type": "CASH_FLOW",
+  "id": "551217536023494657",
+  "accountId": "527043308569256448",
+  "businessId": "",
+  "customerId": null,
+  "projectId": null,
+  "clientId": "9A6E0AED-0E36-4924-A82D-219281013010",
+  "postedOn": "2026-08-10",
+  "payee": "Sam's Club",
+  "memo": "",
+  "knownCategoryId": "6750000000",
+  "coa": {
+    "type": "CATEGORY",
+    "id": "412662722499437315"
+  },
+  "amount": -58.9,
+  "tags": [],
+  "split": null,
+  "state": "CLEARED",
+  "matchState": "NOT_MATCHED",
+  "isReviewed": false,
+  "cpData": {
+    "channel": "PLAID",
+    "id": "8myQdzMOr0S3O59mL0jbidK8AJ89OnHJj64gd",
+    "txnType": "CASH_FLOW",
+    "postedOn": "2026-08-10",
+    "txnOn": "2026-08-09",
+    "payee": "Sam's Club",
+    "amount": -58.9,
+    "merchantId": "KAE0nWNpERLZQyM6AMyDmNXjkQn76jKQBmRqA",
+    "merchantConfidence": 0.98,
+    "inferredPayee": "Sam's Club",
+    "inferredCoa": {
+      "type": "CATEGORY",
+      "id": "412662724378485506"
+    },
+    "cpCategoryId": "250003750"
+  },
+  "source": "QCS_REFRESH",
+  "isExcludedFromF2S": false,
+  "isExcludedFromReports": false,
+  "isDeleted": false,
+  "isBill": false,
+  "isSubscription": false,
+  "isBillable": false,
+  "check": {
+    "number": "",
+    "memo": ""
+  }
+}

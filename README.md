@@ -1,62 +1,60 @@
-# simplifiapi
-An unofficial API for Quicken Simplifi
+# simplifi-mcp
+
+An unofficial [MCP](https://modelcontextprotocol.io) server for Quicken Simplifi. It lets Claude (or any MCP client) read your Simplifi data and update transactions.
 
 ## Install
 
-PyPI is temporarily down. Install with pip from GitHub directly
+Requires Python 3.10+.
 
 ```shell
-pip3 install git+https://github.com/rijn/simplifiapi
+git clone https://github.com/SuperSkipper/simplifi-mcp
+cd simplifi-mcp
+PIPENV_VENV_IN_PROJECT=1 pipenv install --dev    # or: python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
-## CLI
-
-This package provides a command-line tool that could access and save data to local files.
+## Add it to Claude Code
 
 ```shell
-usage: simplifiapi [-h] [--email [EMAIL]] [--password [PASSWORD]] [--token [TOKEN]] [--accounts] [--transactions] [--tags] [--categories] [--filename FILENAME] [--format {json,csv}]
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --email [EMAIL]       The e-mail address for your Quicken Simplifi account
-  --password [PASSWORD]
-                        The password for your Quicken Simplifi account
-  --token [TOKEN]       Use existing token to bypass MFA check
-  --accounts            Retrieve accounts
-  --transactions        Retrieve transactions
-  --tags                Retrieve tags
-  --categories          Retrieve categories
-  --filename FILENAME   Write results to file this prefix
-  --format {json,csv}   The format used to return data.
-
-examples:
-> simplifiapi --token="..." --transactions
-> simplifiapi --token="..." --transactions --filename=20231125 --format=csv
+claude mcp add simplifi -- /path/to/simplifi-mcp/.venv/bin/python -m simplifi_mcp
 ```
 
-## Python API
+Run `/mcp` in Claude Code to check that it's connected. For other MCP clients, the command is the same: run `python -m simplifi_mcp` (or the `simplifi-mcp` script) from the project's virtualenv, over stdio.
 
-The `Client` class allows accessing from python script and making custom analysis.
+## Logging in
 
-```python
-from simplifiapi.client import Client
+The server caches your access token in `resources/http-client.env.json`, under the `token` variable of the `local` environment. This is the JetBrains HTTP Client env file used by `resources/api-requests.http`, so the same token also works as `{{token}}` there.
 
-client = Client()
+When the token is missing or expired, the tools tell Claude to log in:
 
-# Provide either token or email/password
-token = "..."
-token = client.get_token(email=options.email, password=options.password)
+1. Claude calls the `login` tool.
+2. If Simplifi sends an MFA code, Claude asks you for it and calls `submit_mfa_code`.
+3. The new token is saved, and future sessions reuse it until it expires.
 
-assert client.verify_token(token)
+To keep your password out of the chat, put your credentials in the env file and let `login` read them:
 
-# Datasets own transactions and accounts
-datasets = client.get_datasets()
-datasetId = datasets[0]["id"]
-
-# Access transactions
-transactions = client.get_transactions(datasetId)
+```json
+{
+  "local": {
+    "host": "https://services.quicken.com",
+    "email": "you@example.com",
+    "password": "..."
+  }
+}
 ```
+
+The env file is git-ignored. It holds a bearer token, and possibly your password, so treat it like a password.
+
+`logout` deletes the cached token. `auth_status` checks whether the server is logged in.
+
+## Development
+
+```shell
+pipenv run pytest                       # or .venv/bin/pytest
+pipenv run mcp dev simplifi_mcp/server.py   # interactive MCP Inspector
+```
+
+`resources/api-requests.http` has the raw Simplifi API requests for exploring endpoints in a JetBrains IDE.
 
 ## Thanks
 
-This library is heavily inspired by [mintapi](https://github.com/mintapi/mintapi).
+Based on [rijn/simplifiapi](https://github.com/rijn/simplifiapi), which was inspired by [mintapi](https://github.com/mintapi/mintapi).
