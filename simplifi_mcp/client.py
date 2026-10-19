@@ -5,7 +5,7 @@ import requests
 import uuid
 from urllib.parse import urljoin
 
-logger = logging.getLogger("simplifiapi")
+logger = logging.getLogger("simplifi_mcp")
 
 SIMPLIFI_ENDPOINT = "https://services.quicken.com"
 DEFAULT_TIMEOUT = 30
@@ -26,6 +26,10 @@ def _redact(token):
     return "{}...{}".format(token[:4], token[-4:]) if len(token) > 8 else "***"
 
 
+class LoginError(Exception):
+    pass
+
+
 class Client():
 
     def __init__(self, token_env_file=DEFAULT_TOKEN_ENV_FILE,
@@ -33,6 +37,7 @@ class Client():
         self.session = requests.Session()
         self.token_env_file = token_env_file
         self.token_env_name = token_env_name
+        self._pending_login = None
 
     def _read_token_env(self):
         try:
@@ -64,7 +69,14 @@ class Client():
                 json.dump(env, f, indent=2)
                 f.write("\n")
 
-    def get_token(self, email=None, password=None):
+    def start_login(self, email=None, password=None) -> dict:
+        """Begin the OAuth login.
+
+        Returns {"token": ...} if the login completed, or
+        {"mfa_required": True, "mfa_channel": ...} if Simplifi sent an MFA
+        code, in which case call complete_mfa() with it. Never prompts on
+        stdin, so it's safe to call from the MCP server.
+        """
         # Fall back to the email/password stored in the HTTP Client env
         # file when the caller doesn't pass them explicitly. If the file
         # doesn't have them either, fall through to the existing flow
@@ -94,25 +106,42 @@ class Client():
             url="https://services.quicken.com/oauth/authorize", json=body,
             timeout=DEFAULT_TIMEOUT)
         data = r.json()
-        status = data.get("status")
-        if (status == "MFA code sent"):
+        if data.get("status") == "MFA code sent":
             mfaChannel = data.get("mfaChannel")
             logger.warning("MFA Channel: {}".format(mfaChannel))
-            mfaCode = input("MFA Code: ")
+            # Keep the request body (same threatMetrixSessionId) so the MFA
+            # follow-up is recognised as the same login attempt.
             body["mfaChannel"] = mfaChannel
-            body["mfaCode"] = mfaCode
-            r = self.session.post(
-                url="https://services.quicken.com/oauth/authorize", json=body,
-                timeout=DEFAULT_TIMEOUT)
-            r.raise_for_status()
-            data = r.json()
-            status = data.get("status")
-            if (status != "User passed MFA"):
-                logger.error("Login failed.")
-                logger.error(r.json())
-                return
-        code = r.json().get("code")
+            self._pending_login = body
+            return {"mfa_required": True, "mfa_channel": mfaChannel}
 
+        return {"token": self._exchange_code(self._auth_code(data))}
+
+    def complete_mfa(self, mfa_code: str) -> str:
+        """Finish a login started by start_login() and return the token."""
+        body = self._pending_login
+        if body is None:
+            raise LoginError("No login in progress; call start_login() first.")
+        body["mfaCode"] = mfa_code
+        r = self.session.post(
+            url="https://services.quicken.com/oauth/authorize", json=body,
+            timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") != "User passed MFA":
+            logger.error("MFA check failed: {}".format(data))
+            raise LoginError("MFA check failed: {}".format(data.get("status")))
+        self._pending_login = None
+        return self._exchange_code(self._auth_code(data))
+
+    @staticmethod
+    def _auth_code(data: dict) -> str:
+        code = data.get("code")
+        if not code:
+            raise LoginError("Login failed: {}".format(data.get("status") or data))
+        return code
+
+    def _exchange_code(self, code: str) -> str:
         # Step 2: Get token
         r = self.session.post(url="https://services.quicken.com/oauth/token",
                               json={
@@ -126,7 +155,7 @@ class Client():
         r.raise_for_status()
         token = r.json().get("accessToken")
 
-        logger.warn("Retrieved token {}".format(_redact(token)))
+        logger.warning("Retrieved token {}".format(_redact(token)))
 
         return token
 
@@ -141,7 +170,7 @@ class Client():
             return False
         data = r.json()
         userId = data.get("id")
-        logger.warn("User {} logged in.".format(userId))
+        logger.warning("User {} logged in.".format(userId))
 
         # Update session
         self.session.headers.update(headers)
@@ -152,7 +181,7 @@ class Client():
         nextLink = path
         data = []
         while nextLink:
-            logger.warn("Fetching {}".format(nextLink))
+            logger.warning("Fetching {}".format(nextLink))
             kargs.setdefault("timeout", DEFAULT_TIMEOUT)
             r = self.session.get(url=urljoin(
                 SIMPLIFI_ENDPOINT, nextLink), **kargs)
@@ -203,7 +232,7 @@ class Client():
 
         `transaction` should be the full transaction body (the same shape
         returned by get_transactions() / get_account_details() siblings --
-        see transaction_update_example.json for a worked example), since
+        see tests/fixtures/transaction_after.json for a worked example), since
         the API replaces the transaction wholesale rather than patching
         individual fields.
         """

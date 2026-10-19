@@ -4,41 +4,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`simplifiapi` is an unofficial Python client and CLI for the Quicken Simplifi API (`https://services.quicken.com`), forked from rijn/simplifiapi. The repo is named `simplifi-mcp`, but there is no MCP server code yet; today it's the client library, the CLI, and a JetBrains HTTP Client request collection.
+`simplifi-mcp` is an unofficial MCP server for Quicken Simplifi (`https://services.quicken.com`). It's built on the official `mcp` Python SDK, **v2.x**, where `FastMCP` was renamed to `MCPServer` (`from mcp.server.mcpserver import MCPServer`). Examples online that use `mcp.server.fastmcp` are written for v1. The HTTP client started as a fork of rijn/simplifiapi.
 
 ## Commands
 
-Dependencies are managed with Pipenv (`Pipfile`, Python 3.14). Pytest and requests-mock are dev dependencies.
+Dependencies are managed with Pipenv (`Pipfile`, Python 3.14, venv in `.venv/`). Packaging and pytest config live in `pyproject.toml`.
 
 ```shell
-pipenv install --dev            # or: pip install -e . && pip install pytest requests-mock
-pytest                          # testpaths = tests (pytest.ini)
-pytest tests/test_client.py::test_get_token_logs_in_with_explicit_credentials
-pytest -k verify_token
-python -m simplifiapi --help    # or the `simplifiapi` console script after an editable install
-./deploy.sh                     # python -m build + twine upload
+PIPENV_VENV_IN_PROJECT=1 pipenv install --dev
+.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest tests/test_server.py::test_login_with_mfa_then_submit_mfa_code
+.venv/bin/python -m simplifi_mcp            # run the server on stdio
+.venv/bin/mcp dev simplifi_mcp/server.py    # MCP Inspector
 ```
 
 There is no linter or formatter configured.
 
 ## Architecture
 
-- `simplifiapi/client.py`: the `Client` class wraps a single `requests.Session`. Every request goes through `SIMPLIFI_ENDPOINT` with `DEFAULT_TIMEOUT`.
-  - **Auth** (`get_token`) is a two-step OAuth flow: POST `/oauth/authorize` returns a `code`, with an interactive `input()` MFA prompt if the status is `"MFA code sent"`. Then POST `/oauth/token` exchanges the code for an `accessToken`. `verify_token` calls `/userprofiles/me`, and **on success it sets the `Authorization` header on the session**. Later calls depend on that side effect.
-  - **Datasets**: almost every resource is scoped to a dataset through the `Qcs-Dataset-Id` header. Call `get_datasets()` first. The CLI only uses `datasets[0]`.
-  - **List endpoints** use `_unpaginate`, which follows `metaData.nextLink` and collects `resources`. Single-resource methods (`get_transaction`, `get_account_details`, `update_transaction`) copy `session.headers` and add the dataset header.
-  - `update_transaction` does a PUT of the **full** transaction body. The API replaces the whole record, so it doesn't patch individual fields. See `transaction_update_example.json` and `unupdated_transaction.json` for before/after shapes.
-  - Aggregate helpers (`get_net_worth`, `get_investment_accounts`, `get_total_debt`) are built on top of the raw endpoints. `get_net_worth` and `get_investment_accounts` make one detail call per account. `get_total_debt` only uses the list response.
-- `simplifiapi/cli.py`: `configargparse` CLI. Token resolution order: `--token`, then the cached token, then `--email`/`--password`, then an interactive prompt. A verified token is written back to the cache unless `--no-cache` is set. Output is written to `<filename>_<name>.<json|csv>`, and CSV goes through `pandas.json_normalize`.
+- `simplifi_mcp/server.py`: the `MCPServer("simplifi")` instance and its tools. It holds module-level state: one `Client`, an `_authenticated` flag and a cached `_dataset_id`.
+  - **Data tools start with `_session()`**, which returns `(client, dataset_id)`. It authenticates from the cached token and raises `ToolError("... Call the login tool.")` when the token is missing or invalid. The dataset is always `get_datasets()[0]`.
+  - Auth tools: `login` → (`submit_mfa_code`) → token saved; `logout`; `auth_status`. Login takes two tool calls because Simplifi may send an MFA code, and Claude asks the user for it.
+  - **Never `print()` or `input()`.** stdin and stdout are the MCP protocol channel. `main()` sends logging to stderr.
+  - Transaction tools (`search_transactions`, `retrieve_all`) share `_transactions()`. API results (transactions, account names and category names) go through `_cached()` with a 5-minute TTL, which login and logout clear. `_summarize()` trims each record to a few fields and turns IDs into names. Scheduled/projected transactions (`source` `SCHEDULED_TRANSACTION*`) are excluded by default.
+  - Annotate tools with `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, and so on). The docstring and type hints become the tool description and schema Claude sees.
+- `simplifi_mcp/client.py`: the `Client` class wraps a single `requests.Session`.
+  - **Login** has two steps: `start_login()` returns either `{"token": ...}` or `{"mfa_required": True, ...}`. In the second case the request body is kept in `_pending_login` (the MFA follow-up must reuse its `threatMetrixSessionId`), and `complete_mfa(code)` finishes it. Failures raise `LoginError`. `verify_token` calls `/userprofiles/me`, and **on success it sets the `Authorization` header on the session**. Later calls depend on that side effect.
+  - Almost every resource is scoped by the `Qcs-Dataset-Id` header. List endpoints use `_unpaginate`, which follows `metaData.nextLink` and collects `resources`.
+  - `update_transaction` does a PUT of the **full** transaction body (the API replaces the whole record). See `tests/fixtures/transaction_before.json` and `transaction_after.json`.
+  - Aggregate helpers (`get_net_worth`, `get_investment_accounts`) make one detail call per account. `get_total_debt` uses only the account list.
 
-### Token / credential storage (shared with the HTTP Client)
+### Token / credential storage
 
-The token cache is a **JetBrains HTTP Client env file** (`http-client.env.json`), not a separate cache. Tokens and an optional `email`/`password` live under the `"local"` environment. That way a token fetched by the CLI works as `{{token}}` in `api-requests.http`, and the reverse is also true. `save_token`/`clear_token` change only the `token` key and keep other environments and variables. `get_token` falls back to the `email`/`password` stored there.
-
-- `DEFAULT_TOKEN_ENV_FILE` resolves to `resources/http-client.env.json`, next to `resources/api-requests.http`. The file is git-ignored because it holds real credentials.
+The token cache is the **JetBrains HTTP Client env file** `resources/http-client.env.json` (`DEFAULT_TOKEN_ENV_FILE`). It's git-ignored. The `token` and an optional `email`/`password` live under the `"local"` environment, so a token saved by the server works as `{{token}}` in `resources/api-requests.http`, and the reverse is also true. `save_token`/`clear_token` change only the `token` key. `start_login` falls back to the `email`/`password` stored there.
 
 ## Tests
 
-- `tests/conftest.py` provides a `client` fixture pointed at a throwaway `tmp_path` env file, plus a `write_env(**vars)` factory for filling in its `local` environment. Always use these fixtures so tests never touch the real `http-client.env.json`.
-- HTTP is mocked with the `requests_mock` pytest fixture against `https://services.quicken.com/...`. Tests assert on `requests_mock.request_history` to check request bodies and headers.
-- CLI tests call `cli.parse_arguments([...])` directly and patch `cli.Client`/`sys.argv` for `main()`.
+- `tests/conftest.py` provides a `client` fixture pointed at a throwaway `tmp_path` env file, plus a `write_env(**vars)` factory for its `local` environment. Never touch the real env file in tests.
+- HTTP is mocked with the `requests_mock` fixture. Tests assert on `requests_mock.request_history`.
+- Server tests call the tool functions directly (`@mcp.tool()` returns the original function). The autouse `fresh_server` fixture in `tests/test_server.py` injects the `client` fixture and resets the module state.

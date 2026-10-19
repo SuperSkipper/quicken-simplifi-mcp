@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from simplifiapi.client import _redact
+from simplifi_mcp.client import LoginError, _redact
 
 QUICKEN = "https://services.quicken.com"
 
@@ -67,45 +67,53 @@ def test_clear_token_is_a_noop_when_no_token_is_cached(client):
     assert client.load_token() is None
 
 
-# --- get_token -----------------------------------------------------------
+# --- start_login / complete_mfa ---------------------------------------------
 
-def test_get_token_logs_in_with_explicit_credentials(client, requests_mock):
+def test_start_login_logs_in_with_explicit_credentials(client, requests_mock):
     requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"code": "auth-code"})
     requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
 
-    token = client.get_token(email="a@b.com", password="secret")
+    result = client.start_login(email="a@b.com", password="secret")
 
-    assert token == "the-token"
+    assert result == {"token": "the-token"}
     authorize_request = requests_mock.request_history[0].json()
     assert authorize_request["username"] == "a@b.com"
     assert authorize_request["password"] == "secret"
+    assert requests_mock.request_history[1].json()["code"] == "auth-code"
 
 
-def test_get_token_falls_back_to_env_file_credentials_when_not_passed(client, write_env, requests_mock):
+def test_start_login_falls_back_to_env_file_credentials_when_not_passed(client, write_env, requests_mock):
     write_env(email="env@example.com", password="env-secret")
     requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"code": "auth-code"})
     requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
 
-    client.get_token()
+    client.start_login()
 
     authorize_request = requests_mock.request_history[0].json()
     assert authorize_request["username"] == "env@example.com"
     assert authorize_request["password"] == "env-secret"
 
 
-def test_get_token_prefers_explicit_credentials_over_env_file(client, write_env, requests_mock):
+def test_start_login_prefers_explicit_credentials_over_env_file(client, write_env, requests_mock):
     write_env(email="env@example.com", password="env-secret")
     requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"code": "auth-code"})
     requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
 
-    client.get_token(email="explicit@example.com", password="explicit-secret")
+    client.start_login(email="explicit@example.com", password="explicit-secret")
 
     authorize_request = requests_mock.request_history[0].json()
     assert authorize_request["username"] == "explicit@example.com"
     assert authorize_request["password"] == "explicit-secret"
 
 
-def test_get_token_follows_up_with_mfa_code_when_required(client, monkeypatch, requests_mock):
+def test_start_login_raises_when_no_code_is_returned(client, requests_mock):
+    requests_mock.post(f"{QUICKEN}/oauth/authorize", json={"status": "Invalid credentials"})
+
+    with pytest.raises(LoginError, match="Invalid credentials"):
+        client.start_login(email="a@b.com", password="wrong")
+
+
+def test_start_login_reports_mfa_then_complete_mfa_returns_the_token(client, requests_mock):
     requests_mock.post(
         f"{QUICKEN}/oauth/authorize",
         [
@@ -114,17 +122,19 @@ def test_get_token_follows_up_with_mfa_code_when_required(client, monkeypatch, r
         ],
     )
     requests_mock.post(f"{QUICKEN}/oauth/token", json={"accessToken": "the-token"})
-    monkeypatch.setattr("builtins.input", lambda prompt: "123456")
 
-    token = client.get_token(email="a@b.com", password="secret")
+    assert client.start_login(email="a@b.com", password="secret") == {
+        "mfa_required": True, "mfa_channel": "sms"}
+    token = client.complete_mfa("123456")
 
     assert token == "the-token"
-    mfa_request = requests_mock.request_history[1].json()
+    first, mfa_request = (r.json() for r in requests_mock.request_history[:2])
     assert mfa_request["mfaChannel"] == "sms"
     assert mfa_request["mfaCode"] == "123456"
+    assert mfa_request["threatMetrixSessionId"] == first["threatMetrixSessionId"]
 
 
-def test_get_token_returns_none_when_mfa_check_fails(client, monkeypatch, requests_mock):
+def test_complete_mfa_raises_when_mfa_check_fails(client, requests_mock):
     requests_mock.post(
         f"{QUICKEN}/oauth/authorize",
         [
@@ -132,9 +142,15 @@ def test_get_token_returns_none_when_mfa_check_fails(client, monkeypatch, reques
             {"json": {"status": "MFA failed"}},
         ],
     )
-    monkeypatch.setattr("builtins.input", lambda prompt: "wrong-code")
+    client.start_login(email="a@b.com", password="secret")
 
-    assert client.get_token(email="a@b.com", password="secret") is None
+    with pytest.raises(LoginError, match="MFA failed"):
+        client.complete_mfa("wrong-code")
+
+
+def test_complete_mfa_raises_when_no_login_is_pending(client):
+    with pytest.raises(LoginError, match="No login in progress"):
+        client.complete_mfa("123456")
 
 
 # --- verify_token ----------------------------------------------------------

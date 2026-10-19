@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from simplifiapi.client import Client
+from simplifi_mcp.client import Client
 
 
 @pytest.fixture
